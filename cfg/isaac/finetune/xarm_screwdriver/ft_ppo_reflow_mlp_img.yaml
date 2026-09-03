@@ -1,0 +1,78 @@
+###################################
+env_suite: isaac
+env_name: xarm_screwdriver
+
+obs_dim: 6
+cond_steps: 1
+img_cond_steps: 1
+
+action_dim: 6
+horizon_steps: 4
+act_steps: 4
+###################################
+
+defaults:
+  - _self_
+
+hydra:
+  run:
+    dir: ${logdir}
+
+_target_: agent.finetune.reinflow.train_ppo_flow_img_agent.TrainPPOImgFlowAgent
+name: ${env_name}_ft_flow_mlp_img_ta${horizon_steps}_td${denoising_steps}_tdf${ft_denoising_steps}_seed${seed}
+logdir: ${oc.env:REINFLOW_LOG_DIR}/isaac/finetune/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+base_policy_path: ${oc.env:REINFLOW_LOG_DIR}/isaac/pretrain/xarm_screwdriver/xarm_screwdriver_pre_reflow_mlp_img_ta4_td100/checkpoint/state_1000.pt
+resume_path: null
+normalization_path: ${oc.env:REINFLOW_DATA_DIR}/isaac/xarm_screwdriver/normalization.npz
+
+seed: 42
+device: cuda:0
+sim_device: cuda:0
+
+###################################
+denoising_steps: 1
+ft_denoising_steps: 1
+min_std: 0.08
+max_std: 0.14
+###################################
+
+env:
+  n_envs: 4                          # 4 réplicas para balancear con los 8GB VRAM de la GPU
+  name: ${env_name}
+  env_type: isaac
+  best_reward_threshold_for_success: 1
+  max_episode_steps: 400
+  save_video: false
+  use_image_obs: true
+  wrappers:
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: true
+
+shape_meta:
+  obs:
+    rgb:
+      shape: [3, 96, 96]
+    state:
+      shape: [6]
+  action:
+    shape: [6]
+
+wandb:
+  entity: ${oc.env:REINFLOW_WANDB_ENTITY}
+  project: isaac-${env_name}-finetune
+  run: ${now:%Y-%m-%d}_${now:%H-%M-%S}_${name}
+  offline_mode: false
+
+train:
+  n_train_itr: 201
+  n_critic_warmup_itr: 5
+  n_steps: 200
+  gamma: 0.99
+  actor_lr: 3.5e-06
+  critic_lr: 4.5e-04
+  save_model_freq: 50
+  val_freq: 10
+  gae_lambda: 0.95

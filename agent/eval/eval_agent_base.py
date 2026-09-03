@@ -61,7 +61,7 @@ class EvalAgent:
         self.frame_height = 480
         self.all_video_paths=[] # a list of video paths for each denoising step.
         self.record_env_index = 0
-        self.render_onscreen = False
+        self.render_onscreen = cfg.env.get("render", False)
         self.denoising_steps = None
         self.denoising_steps_trained = None
         self.plot_scale = cfg.get("plot_scale", "semilogx")  # Default to semilogx, can be "standard" or "semilogx"
@@ -77,7 +77,7 @@ class EvalAgent:
             cfg.env.name,
             env_type=env_type,
             num_envs=cfg.env.n_envs,
-            asynchronous=True,
+            asynchronous=not self.render_onscreen,
             max_episode_steps=cfg.env.max_episode_steps,
             wrappers=cfg.env.get("wrappers", None),
             robomimic_env_cfg_path=cfg.get("robomimic_env_cfg_path", None),
@@ -347,18 +347,37 @@ class EvalAgent:
                 self.venv.step(action_venv)
             )
             if self.render_onscreen:
-                self.venv.render(mode='human')
+                if 'kitchen' in self.env_name.lower():
+                    base_env = self.venv.envs[0]
+                    while hasattr(base_env, 'env'): base_env = base_env.env
+                    if hasattr(base_env, 'unwrapped'): base_env = base_env.unwrapped
+                    img = base_env.sim.render(width=640, height=480)
+                    if img is not None:
+                        img = img[::-1, :, :] # Flip vertically
+                        import matplotlib.pyplot as plt
+                        if not hasattr(self, "fig"):
+                            plt.ion()
+                            self.fig, self.ax = plt.subplots(figsize=(8, 6))
+                            self.im = self.ax.imshow(img)
+                            self.ax.axis('off')
+                            plt.show()
+                        else:
+                            self.im.set_data(img)
+                            self.fig.canvas.draw()
+                            self.fig.canvas.flush_events()
+                else:
+                    self.venv.render(mode='human'); import time; time.sleep(0.05)
             if self.record_video:
                 if 'kitchen' in self.env_name.lower(): # Kitchen
                     raise ValueError(f"Cannot record video for kitchen environments with the current setup. self.env_name={self.env_name}") # For kitchen environments, we render with the sim.render method, as D4RL kitchen does not support the standard render method.
                 else: # gym or robomimic or d3il
-                    frame_tuple = self.venv.render(mode='rgb_array', height=self.frame_height, width=self.frame_width)
+                    frame_tuple = [self.venv.envs[i].render(mode='rgb_array', height=self.frame_height, width=self.frame_width) for i in range(self.venv.num_envs)]
                 if self.video_writer is not None:
                     frame = frame_tuple[self.record_env_index]
                     # print(f"frame_tuple={len(frame_tuple)}, frame={frame.shape}, frame={frame}")
                     if frame is None or frame == []:
                         raise ValueError(f"frame is {frame} (empty), check your environment rendering settings.")
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), (self.frame_width, self.frame_height))
                     # add title to indicate the model type and the number of denoising steps. 
                     cv2.putText(frame, self.video_title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
                     self.video_writer.write(frame)

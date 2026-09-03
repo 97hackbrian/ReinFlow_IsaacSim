@@ -1,0 +1,66 @@
+_target_: agent.eval.eval_shortcut_agent.EvalShortCutAgent
+name: transport_eval_shortcut_mlp_ta4_td20
+logdir: /workspace/ReinFlow/log/robomimic-eval/transport_eval_shortcut_mlp_ta4_td20/2026-09-03_23-40-59_42
+base_policy_path: /workspace/ReinFlow/log/robomimic/pretrain/transport/transport_pre_shortcut_mlp_ta4_td20/2026-09-03_23-27-47_42/checkpoint/state_1.pt
+robomimic_env_cfg_path: cfg/robomimic/env_meta/transport.json
+normalization_path: /workspace/ReinFlow/data/robomimic/transport/normalization.npz
+load_ema: false
+seed: 42
+device: cpu
+env_name: transport
+obs_dim: 59
+action_dim: 14
+denoising_steps: 20
+cond_steps: 1
+horizon_steps: 4
+act_steps: 4
+n_steps: 300
+render_num: 1
+env:
+  n_envs: 1
+  name: transport
+  best_reward_threshold_for_success: 1
+  max_episode_steps: 300
+  save_video: true
+  wrappers:
+    robomimic_lowdim:
+      normalization_path: /workspace/ReinFlow/data/robomimic/transport/normalization.npz
+      low_dim_keys:
+      - robot0_eef_pos
+      - robot0_eef_quat
+      - robot0_gripper_qpos
+      - robot1_eef_pos
+      - robot1_eef_quat
+      - robot1_gripper_qpos
+      - object
+    multi_step:
+      n_obs_steps: 1
+      n_action_steps: 4
+      max_episode_steps: 300
+      reset_within_step: true
+  render: true
+model:
+  _target_: model.flow.shortcutflow.ShortCutFlow
+  network:
+    _target_: model.flow.mlp_shortcut.ShortCutFlowMLP
+    td_emb_dim: 128
+    cond_mlp_dims:
+    - 128
+    mlp_dims:
+    - 512
+    - 512
+    - 512
+    residual_style: true
+    cond_dim: 59
+    horizon_steps: 4
+    action_dim: 14
+  horizon_steps: 4
+  obs_dim: 59
+  action_dim: 14
+  max_denoising_steps: 20
+  act_min: -1
+  act_max: 1
+  device: cpu
+  seed: 42
+denoising_step_list:
+- 4

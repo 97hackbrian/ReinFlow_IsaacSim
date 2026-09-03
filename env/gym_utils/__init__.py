@@ -126,6 +126,26 @@ def make_async(
         )
         return env
 
+    if env_type in ["isaac", "xarm_isaac", "isaac_sim"]:
+        from env.gym_utils.wrapper.xarm_isaac_env import XArmPickScrewdriverEnv
+        from env.gym_utils.wrapper.multi_step import MultiStep
+        from env.gym_utils.sync_vector_env import SyncVectorEnv
+
+        def _make_isaac():
+            return XArmPickScrewdriverEnv(
+                img_size=(kwargs.get("img_h", 96), kwargs.get("img_w", 96)),
+                max_episode_steps=max_episode_steps or 400,
+                sparse_reward=sparse_reward,
+                device=f"cuda:{gpu_id}",
+                **kwargs
+            )
+
+        env = SyncVectorEnv([_make_isaac for _ in range(num_envs)])
+        if wrappers is not None and "multi_step" in wrappers:
+            env = MultiStep(env, **wrappers["multi_step"])
+        return env
+
+
     # avoid import error due incompatible gym versions
     from gym import spaces
     from env.gym_utils.async_vector_env import AsyncVectorEnv
@@ -224,16 +244,21 @@ def make_async(
             # import inspect
             # print(f"inspect.getsource(env.unwrapped.sim.render)={inspect.getsource(env.unwrapped.sim.render)}")
             # print(f"inspect.getfile(env.unwrapped.sim.render)={inspect.getfile(env.unwrapped.sim.render)}")
-            # def get_rgb(self, width=640, height=480, camera_name="right_cap"):
-            #     try:
-            #         img = self.unwrapped.sim.render(width=width, height=height, camera_id=-1)
-            #         if img is None:
-            #             print("sim.render returned None")
-            #         return img
-            #     except Exception as e:
-            #         print(f"Error in get_rgb: {e}")
-            #         return None
-            # env.get_rgb = get_rgb.__get__(env)
+            def get_rgb(self, width=640, height=480, camera_name="right_cap"):
+                try:
+                    base_env = self
+                    while hasattr(base_env, 'env'):
+                        base_env = base_env.env
+                    if hasattr(base_env, 'unwrapped'):
+                        base_env = base_env.unwrapped
+                    img = base_env.sim.render(width=width, height=height)
+                    if img is None:
+                        print("sim.render returned None")
+                    return img
+                except Exception as e:
+                    print(f"Error in get_rgb: {e}")
+                    return None
+            env.get_rgb = get_rgb.__get__(env)
             # # test rendering
             # os.environ['MUJOCO_GL'] = 'egl'
             # img = env.get_rgb(width=320, height=240, camera_name='left_cap')
@@ -284,14 +309,40 @@ def make_async(
         return MultiStep(env=env, n_obs_steps=wrappers.multi_step.n_obs_steps)
 
     env_fns = [_make_env for _ in range(num_envs)]
-    return (
-        AsyncVectorEnv(
+    if asynchronous:
+        return AsyncVectorEnv(
             env_fns,
             dummy_env_fn=(
-                dummy_env_fn if render or render_offscreen or use_image_obs else None
+                dummy_env_fn if use_image_obs else None
             ),
             delay_init="avoiding" in env_name,  # add delay for D3IL initialization
         )
-        if asynchronous
-        else SyncVectorEnv(env_fns)
-    )
+    else:
+        venv = SyncVectorEnv(env_fns)
+        def reset_arg(self, options_list, **kwargs):
+            obs = []
+            for i, env in enumerate(self.envs):
+                # Handle tuple returned by step/reset in some gym versions
+                o = env.reset(options=options_list[i])
+                if isinstance(o, tuple): o = o[0]
+                obs.append(o)
+            import numpy as np
+            if isinstance(obs[0], np.ndarray):
+                return np.stack(obs)
+            return obs
+        venv.reset_arg = reset_arg.__get__(venv)
+        
+        def call_sync(self, method_name, **kwargs):
+            res = []
+            for env in self.envs:
+                obj = env
+                for part in method_name.split('.'):
+                    obj = getattr(obj, part)
+                try:
+                    out = obj(**kwargs)
+                    res.append((out, True))
+                except Exception as e:
+                    res.append((e, False))
+            return res
+        venv.call_sync = call_sync.__get__(venv)
+        return venv

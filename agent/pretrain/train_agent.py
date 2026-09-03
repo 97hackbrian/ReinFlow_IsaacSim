@@ -339,7 +339,7 @@ class PreTrainAgent:
             for step, batch_train in tqdm(enumerate(self.dataloader_train), desc=f'total steps={steps_per_epoch}') \
                 if self.verbose_train else enumerate(self.dataloader_train):
                 if self.dataset_train.device == "cpu":
-                    batch_train = batch_to_device(batch_train)
+                    batch_train = batch_to_device(batch_train, self.device)
                 
                 self.optimizer.zero_grad()
                 
@@ -368,7 +368,7 @@ class PreTrainAgent:
                     self.model.eval()
                     for batch_val in self.dataloader_val:
                         if self.dataset_val.device == "cpu":
-                            batch_val = batch_to_device(batch_val)
+                            batch_val = batch_to_device(batch_val, self.device)
                         with torch.no_grad:
                             loss_val = self.get_loss(batch_val)
                             loss_val_epoch.append(loss_val.item())

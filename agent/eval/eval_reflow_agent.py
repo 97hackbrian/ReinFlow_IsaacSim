@@ -36,11 +36,11 @@ class EvalReFlowAgent(EvalAgent):
         ################################################      overload        #########################################################
         self.load_ema = cfg.get('load_ema', False) #Turn to True when evaluating pretrained models.
         self.clip_intermediate_actions=True
-        self.record_video =False
+        self.record_video = cfg.env.get("save_video", False)
         self.record_env_index=0
         self.frame_width = 640  # Default, can be overridden
         self.frame_height = 480
-        self.render_onscreen =False #not self.record_video #False
+        self.render_onscreen = True
         self.denoising_steps = cfg.get("denoising_step_list", [1,2, 4,8,16,32,64,128])
         self.denoising_steps_trained = None # actually this is meaning less for reflow. it could be infinity. 
         self.model.show_inference_process = False # whether to print each integration step during sampling. 

@@ -1,0 +1,65 @@
+env_name: kitchen-complete-v0
+action_dim: 9
+horizon_steps: 4
+act_steps: 4
+obs_dim: 60
+cond_steps: 1
+_target_: agent.eval.eval_reflow_agent.EvalReFlowAgent
+name: kitchen-complete-v0_eval_reflow_mlp_ta4_td4
+logdir: /workspace/ReinFlow/log/gym/eval/kitchen-complete-v0_eval_reflow_mlp_ta4_td4/2026-09-03_23-02-35_42
+base_policy_path: /workspace/ReinFlow/log/gym/finetune/kitchen-complete-v0_ppo_reflow_mlp_ta4_td4_tdf4/2026-09-03_22-36-00_seed42/checkpoint/best.pt
+normalization_path: /workspace/ReinFlow/data/gym/kitchen-complete-v0/normalization.npz
+seed: 42
+device: cuda:0
+sim_device: cuda:0
+denoising_steps: 4
+ft_denoising_steps: 4
+denoising_step_list:
+- 4
+batch_size: 128
+n_steps: 280
+render_num: 0
+env:
+  n_envs: 1
+  name: kitchen-complete-v0
+  max_episode_steps: 280
+  reset_at_iteration: false
+  save_video: false
+  best_reward_threshold_for_success: 3
+  wrappers:
+    mujoco_locomotion_lowdim:
+      normalization_path: /workspace/ReinFlow/data/gym/kitchen-complete-v0/normalization.npz
+    multi_step:
+      n_obs_steps: 1
+      n_action_steps: 4
+      max_episode_steps: 280
+      reset_within_step: true
+  render: true
+model:
+  _target_: model.flow.reflow.ReFlow
+  network:
+    _target_: model.flow.mlp_flow.FlowMLP
+    horizon_steps: 4
+    action_dim: 9
+    cond_dim: 60
+    time_dim: 16
+    mlp_dims:
+    - 256
+    - 256
+    - 256
+    cond_mlp_dims:
+    - 128
+    - 32
+    activation_type: Mish
+    out_activation_type: Identity
+    use_layernorm: false
+    residual_style: true
+  device: cuda:0
+  horizon_steps: 4
+  action_dim: 9
+  act_min: -1
+  act_max: 1
+  obs_dim: 60
+  max_denoising_steps: 4
+  seed: 42
+load_ema: false

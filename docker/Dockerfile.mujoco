@@ -1,0 +1,114 @@
+# Dockerfile for ReinFlow with MuJoCo, D4RL, and Robomimic
+# Isolates all legacy C++/OpenGL/Cython/MuJoCo dependencies from host system.
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# Install system dependencies, OpenGL, EGL, OSMesa, and build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    wget \
+    git \
+    unzip \
+    tar \
+    bzip2 \
+    ca-certificates \
+    libssl-dev \
+    libffi-dev \
+    libxml2-dev \
+    libgl1-mesa-dev \
+    libgl1-mesa-glx \
+    libglew-dev \
+    libosmesa6-dev \
+    libglfw3 \
+    libglfw3-dev \
+    libegl1-mesa-dev \
+    libgles2-mesa-dev \
+    patchelf \
+    cmake \
+    ffmpeg \
+    nano \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda
+ENV CONDA_DIR=/opt/conda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py38_23.11.0-2-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+    /bin/bash /tmp/miniconda.sh -b -p $CONDA_DIR && \
+    rm /tmp/miniconda.sh
+ENV PATH=$CONDA_DIR/bin:$PATH
+
+# Create conda environment with Python 3.8
+RUN conda create -n reinflow python=3.8 -y
+SHELL ["conda", "run", "-n", "reinflow", "/bin/bash", "-c"]
+
+# Download and install MuJoCo 2.1.0
+RUN mkdir -p /root/.mujoco && \
+    wget https://github.com/deepmind/mujoco/releases/download/2.1.0/mujoco210-linux-x86_64.tar.gz -O /tmp/mujoco210.tar.gz && \
+    tar -xzf /tmp/mujoco210.tar.gz -C /root/.mujoco/ && \
+    rm /tmp/mujoco210.tar.gz
+
+# Configure environment variables for MuJoCo and OpenGL
+ENV MUJOCO_KEY_PATH=/root/.mujoco
+ENV LD_LIBRARY_PATH=/root/.mujoco/mujoco210/bin:/usr/lib/nvidia:${LD_LIBRARY_PATH}
+ENV CPATH=/opt/conda/envs/reinflow/include:${CPATH}
+ENV MUJOCO_GL=egl
+
+# Install PyTorch with CUDA 11.8 support inside conda env
+RUN pip install --no-cache-dir \
+    torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118
+
+# Install Cython < 3.0 (critical for mujoco-py) and patchelf
+RUN pip install --no-cache-dir 'cython<3.0.0' patchelf fasteners cffi
+
+# Install mujoco-py
+RUN pip install --no-cache-dir mujoco-py==2.1.2.14
+
+# Install dm_control and modern mujoco
+RUN pip install --no-cache-dir mujoco==3.1.6 dm_control==1.0.16
+
+# Install mjrl and D4RL
+RUN pip install --no-cache-dir git+https://github.com/aravindr93/mjrl.git
+RUN pip install --no-cache-dir git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
+
+
+# Install Robomimic and Robosuite
+RUN pip install --no-cache-dir robomimic==0.3.0 robosuite==1.4.1
+
+# Setup robosuite macros
+RUN python -c "import robosuite; from robosuite.scripts import setup_macros; setup_macros.main()" || true
+
+# Install auxiliary utilities & ReinFlow dependencies
+RUN pip install --no-cache-dir \
+    wandb==0.17.7 \
+    tqdm==4.66.5 \
+    pandas==2.0.3 \
+    pypdf>=3.9.0 \
+    seaborn==0.13.2 \
+    hydra-core>=1.3.2 \
+    omegaconf>=2.3.0 \
+    gdown>=5.1.0 \
+    termcolor>=2.4.0 \
+    einops>=0.8.0 \
+    pymunk>=6.6.0 \
+    zarr>=2.17.0 \
+    numba>=0.59.0 \
+    opencv-python>=4.9.0 \
+    diffusers==0.27.2 \
+    huggingface-hub==0.25.2 \
+    matplotlib
+
+# Pre-compile mujoco-py cython modules to prevent runtime compile delay
+RUN python -c "import mujoco_py; print('mujoco-py successfully compiled!')"
+
+# Set working directory
+WORKDIR /workspace/ReinFlow
+
+# Configure environment activation in bash
+RUN echo "conda activate reinflow" >> ~/.bashrc
+RUN echo "export LD_LIBRARY_PATH=/root/.mujoco/mujoco210/bin:/usr/lib/nvidia:\$LD_LIBRARY_PATH" >> ~/.bashrc
+RUN echo "export MUJOCO_GL=egl" >> ~/.bashrc
+
+CMD ["/bin/bash"]
