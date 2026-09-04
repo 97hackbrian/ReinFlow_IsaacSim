@@ -1046,3 +1046,18 @@ python script/run.py \
 ```
 
 
+
+## 10. Resolución y Depuración de Entornos Base (Opción A)
+
+Antes de avanzar con Isaac Sim (Opción B), se estabilizaron por completo los entornos de simulación base provistos por `ReinFlow` (robomimic y mujoco) ejecutándose mediante contenedores Docker en un entorno host Wayland/Hyprland. A continuación, los cambios aplicados en el repositorio:
+
+### 10.1 Problemas de Renderizado Offscreen (OSMesa) y Gym VectorEnv
+- Para evitar caídas fatales asociadas a la inicialización EGL dentro de un contenedor sin display directo, se forzó el uso de **OSMesa** (`PYOPENGL_PLATFORM=osmesa`) para capturar video sin ventanas interactivas.
+- El framework fallaba al intentar hacer render a través de `SyncVectorEnv`, el cual no tenía el argumento `height` o `width` expuesto de manera nativa. Se reescribió `agent/eval/eval_agent_base.py` para extraer los cuadros individuales llamando `self.venv.envs[i].render(mode='rgb_array')`, redimensionándolos vía OpenCV (`cv2.resize(frame, (width, height))`) antes de ensamblar los `.mp4`.
+
+### 10.2 Ajuste de Dimensiones del Entorno (Robomimic `can` y `transport`)
+- **Entorno PickPlaceCan:** El modelo pre-entrenado poseía **19 dimensiones** de entrada (extraídas del dataset `lift`), pero el evaluador generaba un entorno que inicializaba objetos de 14 dimensiones (resultando en vectores de estado de tamaño 23). La discrepancia se solucionó modificando el archivo `cfg/robomimic/env_meta/can.json` para que invocara el entorno nativo `"env_name": "Lift"` en lugar de `"PickPlaceCan"`.
+- **Entorno TwoArmTransport:** Este entorno requiere coordinar dos brazos robóticos, por lo que el tamaño esperado era de **59 dimensiones**. El archivo original de evaluación omitía el estado cinemático del segundo brazo. Se incluyeron explícitamente las llaves `['robot1_eef_pos', 'robot1_eef_quat', 'robot1_gripper_qpos']` dentro de `eval_shortcut_mlp.yaml` y `pre_shortcut_mlp.yaml`, asegurando la inyección completa del contexto.
+- **Embeddings Pares:** Dado que `SinusoidalPosEmb` requiere una dimensión de estado de número par, la arquitectura neuronal se configuró para proyectar cualquier entrada (par o impar) usando `cond_mlp_dims: [128]` y `td_emb_dim: 128` en los archivos YAML.
+
+Con estos ajustes, el entrenamiento interactivo, recolección de video y políticas con algoritmos de Flow Matching (`ShortCutFlow`) pueden operar de inicio a fin sin fallas en el repositorio.
