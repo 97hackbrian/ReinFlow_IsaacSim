@@ -167,7 +167,7 @@ def make_async(
     elif "avoiding" in env_name:
         import gym_avoiding
     else:
-        import d4rl.gym_mujoco
+        pass
     from gym.envs import make as make_
     
 
@@ -217,6 +217,13 @@ def make_async(
             if "Humanoid" in env_name:
                 print(f"make humanoid!")
                 env=make_('Humanoid-v3')
+            elif env_name == "xarm_screwdriver":
+                print(f"Making custom Isaac env: {env_name}")
+                # We extract kwargs meant for the env from the 'wrappers' dict because 
+                # in the yaml config it was placed under wrappers.
+                env_kwargs = dict(wrappers.get("xarm_isaac", {})) if wrappers is not None else {}
+                from env.gym_utils.wrapper.xarm_isaac_env import XArmPickScrewdriverEnv
+                env = XArmPickScrewdriverEnv(**env_kwargs)
             else: # gym, Franka Kitchen
                 print(f'Making gym environment id={env_name}')
                 env = make_(env_name, **kwargs)
@@ -224,6 +231,8 @@ def make_async(
         # add wrappers
         if wrappers is not None:
             for wrapper, args in wrappers.items():
+                if wrapper == "xarm_isaac":
+                    continue
                 env = wrapper_dict[wrapper](env, **args)
         
         if 'kitchen' in env_name.lower():
@@ -307,6 +316,9 @@ def make_async(
             "video.frames_per_second": 12,
         }
         return MultiStep(env=env, n_obs_steps=wrappers.multi_step.n_obs_steps)
+
+    if "xarm_screwdriver" in env_name:
+        asynchronous = False
 
     env_fns = [_make_env for _ in range(num_envs)]
     if asynchronous:

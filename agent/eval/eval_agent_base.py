@@ -134,7 +134,7 @@ class EvalAgent:
     def load_model_for_eval(self):
         data = torch.load(self.base_policy_path, weights_only=True, map_location=self.device)
         self.model: nn.Module        
-        print(f"loading model...")
+        import sys; sys.stdout.flush(); print(f"loading model...")
         if self.load_ema:
             if 'ema' in data.keys():
                 if any('network' in key for key in data["ema"].keys()):
@@ -207,7 +207,7 @@ class EvalAgent:
         cfg_path = os.path.join(self.eval_log_dir, "cfg.yaml")
         with open(cfg_path, 'w') as f:
             OmegaConf.save(self.cfg, f)
-        print(f"Configuration saved to {cfg_path}")
+        import sys; sys.stdout.flush(); print(f"Configuration saved to {cfg_path}")
         
         options_venv = [{} for _ in range(self.n_envs)]
         if self.render_video:
@@ -236,7 +236,7 @@ class EvalAgent:
         num_episodes_finished_list = []
         
         for num_denoising_steps in denoising_steps_set:
-            self.venv.reset()
+            import sys; sys.stdout.flush(); print("Calling venv.reset()", flush=True); self.venv.reset(); print("Finished venv.reset()", flush=True)
             result = self.single_run(num_denoising_steps, options_venv)
             
             num_denoising_steps, avg_single_step_freq, avg_single_step_freq_std, \
@@ -316,7 +316,7 @@ class EvalAgent:
         
         self.model.eval()
         firsts_trajs = np.zeros((self.n_steps + 1, self.n_envs))
-        prev_obs_venv = self.reset_env_all(options_venv=options_venv)
+        print("Calling reset_env_all()", flush=True); prev_obs_venv = self.reset_env_all(options_venv=options_venv); print("Finished reset_env_all()", flush=True)
         firsts_trajs[0] = 1
         reward_trajs = np.zeros((self.n_steps, self.n_envs))
         single_step_duration_list = np.zeros(self.n_steps)
@@ -374,7 +374,7 @@ class EvalAgent:
                     frame_tuple = [self.venv.envs[i].render(mode='rgb_array', height=self.frame_height, width=self.frame_width) for i in range(self.venv.num_envs)]
                 if self.video_writer is not None:
                     frame = frame_tuple[self.record_env_index]
-                    # print(f"frame_tuple={len(frame_tuple)}, frame={frame.shape}, frame={frame}")
+                    # import sys; sys.stdout.flush(); print(f"frame_tuple={len(frame_tuple)}, frame={frame.shape}, frame={frame}")
                     if frame is None or frame == []:
                         raise ValueError(f"frame is {frame} (empty), check your environment rendering settings.")
                     frame = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), (self.frame_width, self.frame_height))
@@ -389,7 +389,7 @@ class EvalAgent:
         if self.video_writer is not None:
             self.video_writer.release()
             self.all_video_paths.append(self.video_path)
-            print(f"Video saved to {self.video_path}")
+            import sys; sys.stdout.flush(); print(f"Video saved to {self.video_path}")
 
         episodes_start_end = []
         for env_ind in range(self.n_envs):
@@ -599,10 +599,10 @@ class EvalAgent:
 
         fig_path = os.path.join(REINFLOW_DIR, log_dir, f'denoise_step.png')
         plt.savefig(fig_path)
-        print(f"Finished evaluating {self.model.__class__.__name__} in environment {self.env_name}")
-        print(f"Base_policy_path: {os.path.join(REINFLOW_DIR,self.base_policy_path)}")
-        print(f"Figure saved to {fig_path}")
-        print(f"Evaluation statistics saved to  {eval_statistics_path}")
+        import sys; sys.stdout.flush(); print(f"Finished evaluating {self.model.__class__.__name__} in environment {self.env_name}")
+        import sys; sys.stdout.flush(); print(f"Base_policy_path: {os.path.join(REINFLOW_DIR,self.base_policy_path)}")
+        import sys; sys.stdout.flush(); print(f"Figure saved to {fig_path}")
+        import sys; sys.stdout.flush(); print(f"Evaluation statistics saved to  {eval_statistics_path}")
         if self.record_video:
-            print(f"Video(s) saved to {self.all_video_paths}")   
+            import sys; sys.stdout.flush(); print(f"Video(s) saved to {self.all_video_paths}")   
         plt.close()

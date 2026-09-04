@@ -1,62 +1,40 @@
-# Contexto de la Sesión y Plan de Integración: ReinFlow + Isaac Sim
+# Contexto y Estado del Proyecto (03 de Septiembre, 2026)
 
-Este documento sirve como registro detallado del progreso, conocimiento y configuraciones (hiperparámetros) descubiertos a lo largo de nuestras sesiones de depuración. Además, establece una hoja de ruta técnica clara para integrar la simulación de Isaac Sim 6.0 y el manipulador robótico xArm con el algoritmo de ReinFlow.
+## Solicitud Original del Usuario
+El usuario solicitó avanzar con la **Opción B**: la integración de `ReinFlow` con la simulación en `Isaac Sim` del brazo robótico xArm, utilizando el entorno de ROS 2 provisto en el repositorio `robo_imitate`.
+La simulación objetivo está definida en: `robo_imitate/xarm_bringup/isaac/object_picking.usda`.
 
-## 1. Contexto y Problemas Solucionados
+## Acciones Realizadas y Decisiones Tomadas
 
-Durante esta fase, operamos bajo la **"Opción A"** (validación de los baselines de MuJoCo y Robosuite dentro de un contenedor Docker en Ubuntu 24.04 con Wayland/Hyprland) para asegurar que el repositorio de `ReinFlow` fuera totalmente funcional antes de realizar modificaciones profundas para Isaac Sim.
+1. **Evaluación de Contenedores:**
+   Dado que `reinflow-mujoco-container` (Ubuntu 20.04) causaba conflictos de dependencias al intentar instalar ROS 2 Humble (Python 3.10 vs 3.8), y el contenedor `isaac-sim-6.0-wayland` está muy encapsulado, optamos por utilizar `robo_imitate-container`.
+   `robo_imitate-container` posee ROS 2 Humble nativo, Python 3.10 y PyTorch, lo cual lo convierte en el puente ideal.
+   Se copiaron e instalaron satisfactoriamente las librerías necesarias de `ReinFlow` dentro de este contenedor.
 
-### 1.1 Corrección del Pipeline de Visualización de MuJoCo / Robosuite
-- **Renderizado Offscreen (OSMesa):** La evaluación en Robomimic fallaba al no contar con un servidor EGL disponible. Forzamos la variable `PYOPENGL_PLATFORM=osmesa` y desactivamos `render_onscreen` en los scripts de evaluación para permitir el uso de `mode="rgb_array"`.
-- **VectorEnv Bug de Render:** `SyncVectorEnv` en la implementación de Gym no propagaba correctamente la llamada `render()`. Modificamos `eval_agent_base.py` para llamar explícitamente a `self.venv.envs[i].render(mode='rgb_array')`, redimensionando los cuadros resultantes vía OpenCV (`cv2.resize()`) a 640x480 antes de compilarlos con `cv2.VideoWriter`.
+2. **Modificación del Código de Evaluación (`ReinFlow_IsaacSim`):**
+   - **`env/gym_utils/__init__.py`:** Se interceptó el entorno `"xarm_screwdriver"` para inicializar la clase `XArmPickScrewdriverEnv` sin pasar por el registro estricto de Gym. Además, se forzó el modo `asynchronous=False` (SyncVectorEnv) para evitar que `AsyncVectorEnv` inicie subprocesos (`multiprocessing`), lo que choca con la instanciación de nodos ROS 2 y genera colisiones de nombres y excepciones de DDS (`ValueError: generator already executing`).
+   - Se eliminaron las llamadas importadas estrictas de `d4rl.gym_mujoco` que causaban bloqueos al arrancar los scripts en un contenedor sin MuJoCo puro.
 
-### 1.2 Resolución de Discordancias de Dimensiones en el Espacio de Estados
-- **Entorno `can` (19 vs 23 dimensiones):** El dataset de `lift` tenía objetos descritos por un tensor de tamaño 10 (total 19 dims), pero el script usaba el entorno `PickPlaceCan` cuyo tamaño era 14 (total 23 dims). Se corrigió reescribiendo `cfg/robomimic/env_meta/can.json` para que el `env_name` usara `Lift`, empatando a 19.
-- **Entorno `transport` (50 vs 59 dimensiones):** Faltaban las variables de estado cinemático del segundo brazo (`robot1`). Se agregó `['robot1_eef_pos', 'robot1_eef_quat', 'robot1_gripper_qpos']` a la lista de `low_dim_keys` en `eval_shortcut_mlp.yaml` y `pre_shortcut_mlp.yaml` para alinear las 59 dimensiones.
-- **Embeddings del Modelo Flow:** Como el campo vectorial requiere una dimensión par para el codificador sinusoidal de posición, se corrigió usando una proyección lineal auxiliar en la red neuronal configurando `td_emb_dim: 128` y `cond_mlp_dims: [128]`.
+3. **Adaptación de la Interfaz Visual / Estado:**
+   - La red de inferencia que entrenamos era `ShortCutFlowViT` (basada en imágenes).
+   - Se corrigió el archivo `cfg/isaac/eval/xarm_screwdriver/eval_shortcut_mlp.yaml` para que utilice el Agente Visual `EvalImgShortCutAgent`, el cual extrae las variables `rgb` del diccionario de estado para inferir los flujos, algo que el agente puramente numérico no hacía.
 
----
+4. **El Entorno ROS 2 (Wrapper `xarm_isaac_env.py`):**
+   - El entorno fue configurado para recibir imágenes en `/rgb` y la pose del robot en `/current_pose` desde Isaac Sim (mediante los Action Graphs en `object_picking.usda`).
+   - El entorno devuelve las acciones deseadas publicando deltas espaciales absolutos en el tópico `/target_frame_raw` (pose cartesiana 6D: XYZ + RPY).
+   - Hubo un error de Gym (versión 0.24.1 vs 0.26) donde el Wrapper devolvía 5 variables (`obs, reward, terminated, truncated, info`), se ajustó para devolver 4 (`obs, reward, done, info`).
 
-## 2. Configuración e Hiperparámetros del Modelo
+5. **El Problema del Movimiento (Estado Actual):**
+   - El modelo RL fue lanzado exitosamente, predijo movimientos y los publicó en `/target_frame_raw`.
+   - **Problema:** Isaac Sim y sus Action Graphs nativos en `object_picking.usda` NO leen `/target_frame_raw`. Isaac Sim mueve sus articulaciones escuchando al tópico de *comandos articulares* (`/isaac/joint_command` de tipo `sensor_msgs/JointState`).
+   - **Causa:** Nuestro algoritmo en `ReinFlow` predice movimientos del efector final en 6D. Falta una etapa de *Cinemática Inversa (IK)* que convierta `/target_frame_raw` en `/isaac/joint_command`.
+   - **Solución propuesta (Pendiente):** En el repositorio `robo_imitate`, existe un script de lanzamiento (`xarm_bringup/launch/lite6_cartesian_launch.py`) que instancia nodos de control espacial (`sixd_speed_limiter` y `cartesian_motion_controller`) que operan la Cinemática Inversa usando MoveIt/Servo, recibiendo los comandos cartesianos y enviando las posiciones articulares a Isaac Sim. El usuario debe ejecutar dicho controlador en paralelo.
+   
+6. **Entrenamiento Previo de Flow Matching Detenido:**
+   El usuario indicó que la PC seguía consumiendo GPU. Se confirmó que el proceso `script/run.py` con el pre-entrenamiento seguía ejecutándose en segundo plano. Fue finalizado por completo (`kill -9`) en todos los contenedores para liberar recursos exclusivamente para Reinforcement Learning.
 
-Para recrear el nivel de rendimiento óptimo visto en los GIFs originales, el pre-entrenamiento y posterior afinamiento (RL) deben gobernarse bajo configuraciones rigurosas.
+## Plan de Acción Pendiente
 
-### 2.1 Pre-entrenamiento (Imitation Learning vía Flow Matching)
-Para alcanzar convergencia completa:
-- **`n_epochs: 3000`**: La cantidad requerida de épocas para que el modelo mapee correctamente el ruido gaussiano a distribuciones de acciones complejas.
-- **`first_cycle_steps: 3000`**: Programador de tasa de aprendizaje (Learning Rate Scheduler) con un perfil de coseno, garantizando descenso de gradiente hasta la última época.
-- **`denoising_steps: 20`**: Resolución de la ODE durante el entrenamiento.
-- **`eval_denoising_steps` o `denoising_step_list: [1, 4]`**: Pasos ultra reducidos durante inferencia/evaluación, habilidad nativa de **ShortCutFlow** que garantiza simulaciones a más de 170 HZ sin perder precisión.
-- **`horizon_steps: 4`**: La red predice 4 acciones futuras secuenciales en un solo paso (Action Chunking) para mitigar errores acumulativos.
-- **`cond_steps: 1`**: Utiliza un 1 paso de estado previo como contexto del mundo.
-
-### 2.2 Fine-Tuning Interactivo con PPO (D-PPO)
-En la fase de Reinforcement Learning interactivo (archivo de referencia `ft_ppo_diffusion_mlp.yaml`):
-- **`clip_ploss_coef: 0.01`**: A diferencia del PPO estándar (0.2), el recorte aquí es minúsculo para no romper el campo vectorial delicado pre-entrenado de la fase de Flujo/Difusión.
-- **`update_epochs: 10`**: Cantidad de épocas PPO por cada tanda de experiencia recolectada.
-- **`batch_size: 7500` a `15000`**: Tamaño de experiencia recolectada (e.g. 50 entornos paralelos corriendo por 300 pasos).
-- **`target_kl: 1.0`**: Límite de KL divergence que frena prematuramente las actualizaciones para conservar confianza en la política original.
-- **`vf_coef: 0.5`**: Coeficiente clásico de pérdida de la función de Valor (Crítico).
-
----
-
-## 3. Plan Detallado: Integración con Isaac Sim 6.0 y Robot xArm
-
-Habiendo dominado la arquitectura del código, la **"Opción B"** implica migrar las capacidades probadas al simulador fotorrealista de NVIDIA y al brazo robótico xArm.
-
-### Fase 1: Extracción y Transformación de Datos (Data Pipeline)
-1. Extraer los datos grabados de teleoperación del repositorio `robo_imitate` (archivos `sim_env_data.parquet`).
-2. Adaptar el script local `data_process/robo_imitate_to_reinflow.py` para mapear las imágenes RGB, acciones del xArm Lite 6 (coordenadas articulares/EEF), y transformarlo al formato estructurado `.npz` y archivo `normalization.npz` que utiliza ReinFlow (separando validación y entrenamiento).
-
-### Fase 2: Implementación del Entorno (Gym Wrapper)
-1. Crear el wrapper de entorno **`env/gym_utils/wrapper/xarm_isaac_env.py`** que herede de `gym.Env`.
-2. Este wrapper debe conectarse de forma nativa u offscreen a **Isaac Sim 6.0** usando Omniverse ISAAC Gym/RL Framework.
-3. Cargar la escena principal a través de los archivos `.usda` (`object_picking.usda`) suministrados desde `robo_imitate`.
-4. El método `step(action)` deberá inyectar comandos de posición del End-Effector u orientaciones al xArm, correr los pasos de física en Isaac Sim, y extraer la imagen de la cámara y estado a través de la API `get_rgb()` implementada en el wrapper (retornando arrays de numpy).
-5. **Recompensa:** Escribir una función de recompensa densa o *sparse* (según la distancia de la pinza al objeto) para que la fase RL posea retroalimentación.
-
-### Fase 3: Pipeline de Entrenamiento unificado
-1. Crear un archivo `cfg/isaac/pretrain/pre_shortcut_mlp.yaml` apuntando al dataset extraído del xArm.
-2. Entrenar usando `agent.pretrain.train_shortcut_agent.TrainShortCutAgent` para pre-entrenar el campo vectorial del comportamiento teleoperado del xArm recogiendo la caja/tornillo en la escena visual (Imitation Learning).
-3. Evaluar el desempeño preliminar usando una versión modificada de nuestro script actual de visualización, guardando videos (`.mp4`) del robot xArm.
-4. Pasar a la etapa final de RL, creando `cfg/isaac/finetune/ft_ppo_shortcut_mlp.yaml` que invoca `agent.finetune.train_ppo_diffusion_agent` conectándose al Wrapper interactivo de Isaac Sim 6.0 para pulir y asegurar una tasa de éxito máxima del Pick & Place.
+1. Ejecutar de forma persistente el `lite6_cartesian_launch.py` dentro de `robo_imitate-container`.
+2. Validar que la cadena de comunicación fluya: `ReinFlow` (`/target_frame_raw`) --> `sixd_speed_limiter` (`/target_frame`) --> `cartesian_motion_controller` --> `/isaac/joint_command` --> `Isaac Sim`.
+3. Iniciar la fase de **Fine-Tuning con RL (DPPO o PPO-Flow)** usando el pre-entrenamiento base de Flow Matching, ya con el brazo moviéndose libremente en Isaac Sim.

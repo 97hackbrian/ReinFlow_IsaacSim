@@ -1061,3 +1061,27 @@ Antes de avanzar con Isaac Sim (Opción B), se estabilizaron por completo los en
 - **Embeddings Pares:** Dado que `SinusoidalPosEmb` requiere una dimensión de estado de número par, la arquitectura neuronal se configuró para proyectar cualquier entrada (par o impar) usando `cond_mlp_dims: [128]` y `td_emb_dim: 128` en los archivos YAML.
 
 Con estos ajustes, el entrenamiento interactivo, recolección de video y políticas con algoritmos de Flow Matching (`ShortCutFlow`) pueden operar de inicio a fin sin fallas en el repositorio.
+
+## 11. Ejecución de Modelos Visomotor en Isaac Sim (Opción B)
+
+Al avanzar en la integración con **Isaac Sim** empleando una arquitectura ROS 2 y un entorno visual, se delinearon los siguientes flujos de trabajo crítico para garantizar la correcta ejecución en la tarjeta gráfica del Host:
+
+### 11.1 Contenedor Unificado (ROS 2 Humble + ReinFlow)
+Para evitar conflictos nativos entre dependencias MuJoCo de Python 3.8 y requerimientos base de ROS 2 Humble (Python 3.10), el entorno de evaluación debe ejecutarse dentro del **`robo_imitate-container`**. Este contenedor posee de manera subyacente la instalación de `diffusers`, `torch`, y herramientas de Gym. 
+
+Al lanzar un modelo visual (`ShortCutFlowViT`), se debe usar la arquitectura `EvalImgShortCutAgent` en la configuración `eval_shortcut_mlp.yaml` (o la que aplique), garantizando la inyección correcta de observaciones tipo imagen (capturadas vía el tópico `/rgb`) y de variables propioceptivas (pose 6D en `/current_pose`).
+
+### 11.2 Sincronización del VectorEnv y API Gymnasium
+Dentro del archivo `env/gym_utils/__init__.py`, el wrapper de `xarm_isaac` se invoca con `asynchronous=False` (SyncVectorEnv). Esto es mandatorio porque `AsyncVectorEnv` emplea multiprocesamiento para clonar el entorno, lo cual colisiona severamente con la inicialización estricta de la estructura de Nodos ROS 2, causando un error de `rclpy` (DDS) de ejecución simultánea de generadores.
+
+En el wrapper `xarm_isaac_env.py`, es vital seguir la especificación de Gymnasium heredada (versión 0.24.1) devolviendo 4 parámetros en la función `step` (`obs, reward, done, info`) en lugar de los 5 de versiones recientes (`obs, reward, terminated, truncated, info`), de lo contrario ocurrirá el error `too many values to unpack`.
+
+### 11.3 Cadena Cinemática e IK en ROS 2
+Un hallazgo arquitectónico de alta criticidad radíca en la disparidad de los espacios de acción. Los modelos de *Flow Matching* entrenados en ReinFlow, a través de demostraciones expertas, predicen y emiten *Movimientos Delta Cartesianos en 6 Grados de Libertad (XYZ + Roll Pitch Yaw)*. 
+Sin embargo, **Isaac Sim (el nodo OmniGraph del brazo)** demanda intrínsecamente recibir consignas por cada eje articular (Joints) a través del tópico `/isaac/joint_command`.
+
+Por lo tanto, la arquitectura RL por sí misma NO puede mover el brazo dentro del simulador sin un procesador intermedio. Para que el lazo se cierre satisfactoriamente, el usuario **debe instanciar los nodos de control de ROS 2 provistos en el repositorio `robo_imitate`**:
+```bash
+docker exec -it robo_imitate-container bash -c "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && export ROS_DOMAIN_ID=0 && export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp && ros2 launch xarm_bringup lite6_cartesian_launch.py rviz:=false sim:=true"
+```
+Esta acción lanza el **`cartesian_motion_controller`** y el limitador de velocidad, los cuales se encargan de suscribirse a los puntos publicados por ReinFlow en el tópico `/target_frame_raw`, resolver la cinemática inversa (IK) sobre la marcha, y despachar los ángulos directamente al bus `/isaac/joint_command`.

@@ -201,6 +201,7 @@ class XArmPickScrewdriverEnv(gym.Env):
 
         terminated = bool(success)
         truncated = bool(self.step_count >= self.max_episode_steps)
+        done = terminated or truncated
 
         info = {
             "success": float(success),
@@ -210,7 +211,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         }
 
         self.prev_action = action.copy()
-        return obs, reward, terminated, truncated, info
+        return obs, reward, done, info
 
     def _send_ros2_action(self, action):
         from geometry_msgs.msg import PoseStamped

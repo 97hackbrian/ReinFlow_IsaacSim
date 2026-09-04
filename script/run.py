@@ -32,7 +32,6 @@ clean_pycache(directory=REINFLOW_DIR)
 
 # register kitchen tasks in advance. prevent env not found error. 
 import gym
-import d4rl.gym_mujoco
 
 import gc
 gc.collect()
