@@ -382,7 +382,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         act_mat[:3, :3] = act_rot
         act_mat[0, 3] = act_x
         act_mat[1, 3] = act_y
-        act_mat[2, 3] = act_z
+        act_mat[2, 3] = -act_z
 
         target_mat = curr_mat @ act_mat
         target_rot = target_mat[:3, :3]
