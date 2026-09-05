@@ -87,6 +87,7 @@ class TrainAgent:
             render_offscreen=cfg.env.get("save_video", False),
             obs_dim=cfg.obs_dim,
             action_dim=cfg.action_dim,
+            normalization_path=cfg.get("normalization_path", None),
             **cfg.env.specific if "specific" in cfg.env else {},
         )
         if not env_type == "furniture":

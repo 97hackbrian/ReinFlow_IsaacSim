@@ -44,6 +44,7 @@ env:
   wrappers:
     xarm_isaac:
       mode: 'ros2_sync'
+      normalization_path: ${oc.env:REINFLOW_DATA_DIR}/isaac/xarm_screwdriver/normalization.npz
     multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}

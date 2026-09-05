@@ -223,6 +223,8 @@ def make_async(
                 # We extract kwargs meant for the env from the 'wrappers' dict because 
                 # in the yaml config it was placed under wrappers.
                 env_kwargs = dict(wrappers.get("xarm_isaac", {})) if wrappers is not None else {}
+                print(f"[DEBUG] wrappers={wrappers}")
+                print(f"[DEBUG] env_kwargs={env_kwargs}")
                 from env.gym_utils.wrapper.xarm_isaac_env import XArmPickScrewdriverEnv
                 env = XArmPickScrewdriverEnv(**env_kwargs)
             else: # gym, Franka Kitchen

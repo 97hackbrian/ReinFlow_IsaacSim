@@ -81,6 +81,9 @@ class XArmPickScrewdriverEnv(gym.Env):
             self.obs_max = data['obs_max']
             self.action_min = data['action_min']
             self.action_max = data['action_max']
+            print(f"[INIT] Loaded normalization! action_min={self.action_min}")
+        else:
+            print("[INIT ERROR] normalization_path is None!")
 
         # Bounds for object randomization (from robo_imitate)
         self.spawn_x_min, self.spawn_x_max = 0.22, 0.40
@@ -183,14 +186,53 @@ class XArmPickScrewdriverEnv(gym.Env):
 
         
         if self.mode == "ros2_sync":
-            from geometry_msgs.msg import Twist
+            from geometry_msgs.msg import Twist, PoseStamped
             from std_msgs.msg import Float64MultiArray
+            from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+            import subprocess
+            import re
+            import time
+            
             # Open gripper
             g_msg = Float64MultiArray()
             g_msg.data = [0.0]
             if hasattr(self, 'isaac_gripper_pub'):
                 self.isaac_gripper_pub.publish(g_msg)
             
+            # Reset Robot Pose using JointTrajectoryController to match robo_imitate perfectly
+            def call_ros2_service(activate_controllers, deactivate_controllers):
+                service_name = '/controller_manager/switch_controller'
+                service_type = 'controller_manager_msgs/srv/SwitchController'
+                strictness = '2'
+                activate_asap = 'true'
+                command = f'ros2 service call {service_name} {service_type} "{{activate_controllers: [\\"{activate_controllers}\\"], deactivate_controllers: [\\"{deactivate_controllers}\\"], strictness: {strictness}, activate_asap: {activate_asap}}}"'
+                try:
+                    subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as e:
+                    self.node.get_logger().error(f"Error calling ROS 2 service: {e}")
+
+            if not hasattr(self, 'publisher_joint_init'):
+                self.publisher_joint_init = self.node.create_publisher(JointTrajectory, '/joint_trajectory_controller/joint_trajectory', 1)
+                self.joint_names = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6']
+
+            joint_state = JointTrajectory()
+            joint_state.joint_names = self.joint_names
+            point = JointTrajectoryPoint()
+            # The exact home joint positions used in pick_screwdriver
+            point.positions = [0.00148, 0.06095, 1.164, -0.00033, 1.122, -0.00093]
+            point.time_from_start.sec = 3
+            point.time_from_start.nanosec = 0
+            joint_state.points = [point]
+            
+            # Switch to joint controller, move to init pose, and switch back
+            call_ros2_service('joint_trajectory_controller', 'cartesian_motion_controller')
+            joint_state.header.stamp = self.node.get_clock().now().to_msg()
+            self.publisher_joint_init.publish(joint_state)
+            
+            time.sleep(3.5) # wait for the physical robot movement
+            
+            call_ros2_service('cartesian_motion_controller', 'joint_trajectory_controller')
+
             twist = Twist()
 
             twist.linear.x = float(self.target_spawn_x)
@@ -210,8 +252,13 @@ class XArmPickScrewdriverEnv(gym.Env):
         
     def unnormalize_action(self, action):
         if self.action_min is not None:
+            # print(f"[DEBUG] unnormalize_action: raw action = {action}")
             action = (action + 1) / 2.0
-            return action * (self.action_max - self.action_min) + self.action_min
+            unnorm_act = action * (self.action_max - self.action_min) + self.action_min
+            # print(f"[DEBUG] unnormalize_action: unnormalized action = {unnorm_act}")
+            return unnorm_act
+        else:
+            self.node.get_logger().error("[ERROR] action_min is None! Actions are not being unnormalized!")
         return action
 
     def step(self, action):
@@ -312,20 +359,46 @@ class XArmPickScrewdriverEnv(gym.Env):
         from geometry_msgs.msg import PoseStamped
         import transforms3d as t3d
 
+        import numpy as np
+
         msg = PoseStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
-        msg.header.frame_id = "gripper_link_base"
+        msg.header.frame_id = "link_base"
 
-        # action is already in physical units — use directly
-        msg.pose.position.x = float(action[0])
-        msg.pose.position.y = float(action[1])
-        msg.pose.position.z = float(action[2])
+        # 1. current absolute pose matrix (link_base)
+        curr_x, curr_y, curr_z, curr_rx, curr_ry, curr_rz = self.current_ee_pose
+        curr_rot = t3d.euler.euler2mat(curr_rx, curr_ry, curr_rz)
+        curr_mat = np.eye(4)
+        curr_mat[:3, :3] = curr_rot
+        curr_mat[0, 3] = curr_x
+        curr_mat[1, 3] = curr_y
+        curr_mat[2, 3] = curr_z
 
-        quat = t3d.euler.euler2quat(action[3], action[4], action[5])
-        msg.pose.orientation.w = float(quat[0])
-        msg.pose.orientation.x = float(quat[1])
-        msg.pose.orientation.y = float(quat[2])
-        msg.pose.orientation.z = float(quat[3])
+        # 2. relative action matrix (gripper_link_base)
+        act_x, act_y, act_z, act_rx, act_ry, act_rz = action
+        act_rot = t3d.euler.euler2mat(act_rx, act_ry, act_rz)
+        act_mat = np.eye(4)
+        act_mat[:3, :3] = act_rot
+        act_mat[0, 3] = act_x
+        act_mat[1, 3] = act_y
+        act_mat[2, 3] = act_z
+
+        # 3. compute new absolute target
+        target_mat = curr_mat @ act_mat
+        
+        target_rot = target_mat[:3, :3]
+        target_x, target_y, target_z = target_mat[:3, 3]
+        
+        target_quat = t3d.quaternions.mat2quat(target_rot) # returns w, x, y, z
+
+        msg.pose.position.x = float(target_x)
+        msg.pose.position.y = float(target_y)
+        msg.pose.position.z = float(target_z)
+
+        msg.pose.orientation.w = float(target_quat[0])
+        msg.pose.orientation.x = float(target_quat[1])
+        msg.pose.orientation.y = float(target_quat[2])
+        msg.pose.orientation.z = float(target_quat[3])
 
         self.target_raw_pub.publish(msg)
 

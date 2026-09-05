@@ -45,6 +45,9 @@ env:
   save_video: false
   use_image_obs: true
   wrappers:
+    xarm_isaac:
+      mode: 'ros2_sync'
+      normalization_path: ${normalization_path}
     multi_step:
       n_obs_steps: ${cond_steps}
       n_action_steps: ${act_steps}

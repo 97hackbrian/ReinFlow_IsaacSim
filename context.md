@@ -133,25 +133,18 @@ LAST_CKPT=$(docker exec robo_imitate-container bash -c \
 | 3 | Reward usa obs normalizadas contra coords reales | ✅ Resuelto |
 | 4 | `speed_multiplier * 0.001` → movimientos sub-milímetro | ✅ Resuelto |
 | 5 | `action * 40` después de unnormalizar → deltas de 6+ metros | ✅ Resuelto |
-| 6 | `/target_frame_raw` sigue mostrando valores > 0.2 m | ❌ **Pendiente** |
+| 6 | `/target_frame_raw` sigue mostrando valores > 0.2 m | ✅ Resuelto |
 | 7 | `Twist` importado desde `std_msgs` en vez de `geometry_msgs` | ✅ Resuelto |
 | 8 | Procesos zombie `script/run.py` acumulados en contenedor | ✅ Resuelto repetidamente |
 
-### Bug 6 — Detalle (CRÍTICO, NO RESUELTO)
-- **Síntoma**: Topic `/target_frame_raw` muestra `x=-0.213, y=-0.392, z=0.589` m.
-- **Esperado**: Valores máximos de ~0.169 m (según `action_max`).
-- **Análisis**: Esos valores son imposibles de producir con unnormalización correcta desde [-1,1]. Requeriría una policy output de `[-2.28, -2.82, +5.38]`, fuera de rango.
-- **Hipótesis A**: `normalization_path` no llega al constructor → `action_min=None` → `unnormalize_action` no hace nada → se envía la salida raw del flow (valores fuera de rango de acción real).
-- **Hipótesis B**: El modelo con solo 25 épocas (loss=0.050) produce predicciones fuera del espacio de entrenamiento.
-- **Diagnóstico a hacer en próxima sesión**:
-  ```python
-  # En __init__ de XArmPickScrewdriverEnv:
-  print(f"[INIT] action_min={self.action_min}")
-  # En step():
-  print(f"[STEP] policy action raw: {action}")
-  action = self.unnormalize_action(action)
-  print(f"[STEP] unnormalized: {action}")
-  ```
+#### Bug 6 — Detalle (RESUELTO PERMANENTEMENTE)
+- **Causa Raíz**: 
+  1. `normalization_path` no se pasaba desde `cfg` hacia `make_async()` en `train_agent.py`.
+  2. `xarm_isaac_env.py` enviaba los deltas relativos de la acción (respecto a `gripper_link_base`) directamente a `/target_frame_raw`. Sin embargo, `sixd_speed_limiter` asume que todo lo que recibe es una pose **absoluta** en el marco base (`link_base`). Esto causaba que el robot intentara moverse a coordenadas imposibles.
+- **Solución Aplicada**:
+  1. Se modificó `train_agent.py` y `eval_agent_base.py` para pasar `normalization_path`.
+  2. Se modificó `_send_ros2_action()` en `xarm_isaac_env.py` para calcular la **nueva pose absoluta** multiplicando la pose actual del EEF por el delta relativo de la acción (`curr_mat @ act_mat`), replicando la lógica exacta del script de inferencia del experto.
+  3. Se añadió un reset a la posición *home* (`x=0.207, y=0, z=0.35`) al inicio de cada episodio usando `/target_frame_raw`.
 
 ---
 
