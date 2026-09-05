@@ -137,6 +137,7 @@ def make_async(
                 max_episode_steps=max_episode_steps or 400,
                 sparse_reward=sparse_reward,
                 device=f"cuda:{gpu_id}",
+                normalization_path=normalization_path,
                 **kwargs
             )
 

@@ -79,14 +79,14 @@ def dict_take_last_n(x, n):
 def aggregate(data, method="max"):
     if method == "max":
         # equivalent to any
-        return np.max(data)
+        return np.max(data, axis=0)
     elif method == "min":
         # equivalent to all
-        return np.min(data)
+        return np.min(data, axis=0)
     elif method == "mean":
-        return np.mean(data)
+        return np.mean(data, axis=0)
     elif method == "sum":
-        return np.sum(data)
+        return np.sum(data, axis=0)
     else:
         raise NotImplementedError()
 
@@ -170,7 +170,14 @@ class MultiStep(gym.Wrapper):
                 break
             
             # done does not differentiate terminal and truncation
-            observation, reward, done, info = self.env.step(act)
+            step_ret = self.env.step(act)
+            if len(step_ret) == 4:
+                observation, reward, done, info = step_ret
+                if isinstance(info, (list, tuple)) and len(info) > 0: info = info[0]
+            else:
+                observation, reward, terminated, truncated, info = step_ret
+                if isinstance(info, (list, tuple)) and len(info) > 0: info = info[0]
+                done = terminated or truncated
 
             self.obs.append(observation)
             self.action.append(act)
@@ -237,6 +244,11 @@ class MultiStep(gym.Wrapper):
         return stack_last_n_obs(self.action, n_steps)
 
     def _add_info(self, info):
+        if isinstance(info, (list, tuple)):
+            if len(info) > 0 and isinstance(info[0], dict):
+                info = info[0] # Just take the first one since n_envs=1 for Isaac
+            else:
+                info = {}
         for key, value in info.items():
             self.info[key].append(value)
 
@@ -244,6 +256,21 @@ class MultiStep(gym.Wrapper):
         """Not the best design"""
         return self.env.render(**kwargs)
 
+
+
+    def reset_arg(self, options_list=None, **kwargs):
+        if hasattr(self.env, "reset_arg"):
+            obs = self.env.reset_arg(options_list=options_list, **kwargs)
+        else:
+            obs = self.env.reset()
+                
+        self.obs = deque([obs], maxlen=max(self.n_obs_steps + 1, self.n_action_steps))
+        self.action = deque(maxlen=self.n_action_steps)
+        self.reward = deque(maxlen=self.n_action_steps)
+        self.done = deque(maxlen=self.n_action_steps)
+        self.info = __import__('collections').defaultdict(lambda: deque(maxlen=self.n_obs_steps + 1))
+        self.cnt = 0
+        return self._get_obs()
 
 if __name__ == "__main__":
     import os
@@ -303,3 +330,4 @@ if __name__ == "__main__":
     wrapper.close()
     plt.imshow(img)
     plt.savefig("test.png")
+

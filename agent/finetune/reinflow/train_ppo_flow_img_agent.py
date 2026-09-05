@@ -61,7 +61,7 @@ class TrainPPOImgFlowAgent(TrainPPOFlowAgent):
 
         self.skip_initial_eval =False
         
-        self.use_early_stop = True
+        self.use_early_stop = False
         
         self.fix_nextvalue_augment_bug=True #False
         

@@ -371,7 +371,7 @@ class EvalAgent:
                 if 'kitchen' in self.env_name.lower(): # Kitchen
                     raise ValueError(f"Cannot record video for kitchen environments with the current setup. self.env_name={self.env_name}") # For kitchen environments, we render with the sim.render method, as D4RL kitchen does not support the standard render method.
                 else: # gym or robomimic or d3il
-                    frame_tuple = [self.venv.envs[i].render(mode='rgb_array', height=self.frame_height, width=self.frame_width) for i in range(self.venv.num_envs)]
+                    frame_tuple = [self.venv.envs[i].render(mode='rgb_array') for i in range(self.venv.num_envs)]
                 if self.video_writer is not None:
                     frame = frame_tuple[self.record_env_index]
                     # import sys; sys.stdout.flush(); print(f"frame_tuple={len(frame_tuple)}, frame={frame.shape}, frame={frame}")
