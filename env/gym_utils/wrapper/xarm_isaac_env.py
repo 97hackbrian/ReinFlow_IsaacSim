@@ -63,7 +63,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         self.mode = mode
         self.usd_path = usd_path
         self.img_size = img_size
-        self.max_episode_steps = max_episode_steps
+        self.max_episode_steps = 2000
         self.trigger_z = trigger_z
         self.final_grasp_z = final_grasp_z
         self.speed_multiplier = speed_multiplier
@@ -376,6 +376,7 @@ class XArmPickScrewdriverEnv(gym.Env):
 
         # 2. relative action matrix (gripper_link_base)
         act_x, act_y, act_z, act_rx, act_ry, act_rz = action
+        
         act_rot = t3d.euler.euler2mat(act_rx, act_ry, act_rz)
         act_mat = np.eye(4)
         act_mat[:3, :3] = act_rot
@@ -383,10 +384,9 @@ class XArmPickScrewdriverEnv(gym.Env):
         act_mat[1, 3] = act_y
         act_mat[2, 3] = act_z
 
-        # 3. compute new absolute target
         target_mat = curr_mat @ act_mat
-        
         target_rot = target_mat[:3, :3]
+
         target_x, target_y, target_z = target_mat[:3, 3]
         
         target_quat = t3d.quaternions.mat2quat(target_rot) # returns w, x, y, z
@@ -410,6 +410,11 @@ class XArmPickScrewdriverEnv(gym.Env):
             "rgb": self.latest_rgb.copy()
         }
 
+    def render(self, mode="rgb_array", **kwargs):
+        if mode == "rgb_array":
+            # Return as (H, W, C) for rendering, we currently have (C, H, W)
+            return np.transpose(self.latest_rgb, (1, 2, 0))
+        return None
     def _compute_reward(self, raw_ee_pos, action):
         """Compute reward using raw (unnormalized) end-effector position in meters."""
         dist_xy = math.sqrt((raw_ee_pos[0] - self.target_spawn_x) ** 2 + (raw_ee_pos[1] - self.target_spawn_y) ** 2)
@@ -420,23 +425,26 @@ class XArmPickScrewdriverEnv(gym.Env):
             return 0.0
 
         # Dense kinematic reward
-        # 1. Approach in XY
-        r_reach = math.exp(- (dist_xy ** 2) / (2 * (0.05 ** 2)))
-
-        # 2. Descent reward (only if settled in XY)
+        # 1. Approach in XY (Linear distance penalty provides gradient everywhere)
+        # Instead of an exponential that is 0 when far, we linearly penalize distance
+        # so the agent always knows to move closer to increase reward.
+        r_reach = -dist_xy * 5.0
+        
+        # 2. Descent reward
+        # Encourage descending as it gets closer
         r_descend = 0.0
-        if dist_xy < 0.03:
+        if dist_xy < 0.08:
             z_initial = 0.30
-            r_descend = max(0.0, (z_initial - raw_ee_pos[2]) * 5.0)
+            r_descend = max(0.0, (z_initial - raw_ee_pos[2]) * 10.0)
 
-        # 3. Trigger grasp bonus
+        # 3. Trigger condition
         r_trigger = 0.0
-        if dist_xy < 0.02 and raw_ee_pos[2] <= self.trigger_z:
-            r_trigger = 5.0
+        if dist_xy < 0.03 and raw_ee_pos[2] <= self.trigger_z:
+            r_trigger = 20.0
 
-        # 4. Action smoothness penalties
-        r_penalty = 0.01 * np.sum(np.square(action)) + 0.005 * np.sum(np.square(action - self.prev_action))
-
+        # 4. Action smoothness penalties (reduced to prevent collapsing to 0)
+        r_penalty = 0.001 * np.sum(np.square(action))
+        
         total_reward = r_reach + r_descend + r_trigger - r_penalty
         return float(total_reward)
 
@@ -444,4 +452,3 @@ class XArmPickScrewdriverEnv(gym.Env):
         if mode == "rgb_array":
             # Return as (H, W, C) for rendering, we currently have (C, H, W)
             return np.transpose(self.latest_rgb, (1, 2, 0))
-        return None

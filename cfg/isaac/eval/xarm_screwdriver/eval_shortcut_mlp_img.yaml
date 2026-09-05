@@ -1,0 +1,87 @@
+defaults:
+  - _self_
+hydra:
+  run:
+    dir: ${logdir}
+_target_: agent.eval.eval_shortcut_img_agent.EvalImgShortCutAgent
+
+name: ${env_name}_eval_shortcut_mlp_ta${horizon_steps}_td${denoising_steps}
+logdir: ${oc.env:REINFLOW_LOG_DIR}/isaac-eval/${name}/${now:%Y-%m-%d}_${now:%H-%M-%S}_${seed}
+
+base_policy_path: ???
+normalization_path: ${oc.env:REINFLOW_DATA_DIR}/isaac/${env_name}/normalization.npz
+
+load_ema: true
+seed: 42
+device: cuda:0
+env_name: xarm_screwdriver
+obs_dim: 6
+action_dim: 6
+denoising_steps: 20
+cond_steps: 1
+img_cond_steps: 1
+horizon_steps: 4
+act_steps: 4
+
+denoising_step_list: [20]
+n_steps: 1000
+render_num: 1
+
+shape_meta:
+  obs:
+    rgb:
+      shape: [3, 96, 96]
+    state:
+      shape: [6]
+  action: 
+    shape: [6]
+
+env:
+  n_envs: 1
+  name: ${env_name}
+  best_reward_threshold_for_success: 1
+  max_episode_steps: 1000
+  save_video: true
+  wrappers:
+    xarm_isaac:
+      mode: 'ros2_sync'
+      normalization_path: ${oc.env:REINFLOW_DATA_DIR}/isaac/xarm_screwdriver/normalization.npz
+    multi_step:
+      n_obs_steps: ${cond_steps}
+      n_action_steps: ${act_steps}
+      max_episode_steps: ${env.max_episode_steps}
+      reset_within_step: true
+
+model:
+  _target_: model.flow.shortcutflow.ShortCutFlow
+  network:
+    _target_: model.flow.mlp_shortcut.ShortCutFlowViT
+    backbone:
+      _target_: model.common.vit.VitEncoder
+      obs_shape: ${shape_meta.obs.rgb.shape}
+      num_channel: ${eval:'${shape_meta.obs.rgb.shape[0]} * ${img_cond_steps}'}
+      cfg:
+        patch_size: 8
+        depth: 1
+        embed_dim: 128
+        num_heads: 4
+        embed_style: embed2
+        embed_norm: 0
+    img_cond_steps: ${img_cond_steps}
+    augment: false
+    num_img: 1
+    visual_feature_dim: 128
+    td_emb_dim: 32
+    mlp_dims: [512, 512, 512]
+    residual_style: true
+    prop_dim: ${eval:'${obs_dim} * ${cond_steps}'}
+    horizon_steps: ${horizon_steps}
+    action_dim: ${action_dim}
+  device: ${device}
+  horizon_steps: ${horizon_steps}
+  action_dim: ${action_dim}
+  act_min: -1
+  act_max: 1 
+  obs_dim: ${obs_dim}
+  max_denoising_steps: ${denoising_steps}
+  seed: ${seed}

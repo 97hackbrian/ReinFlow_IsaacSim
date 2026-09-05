@@ -261,3 +261,31 @@ docker exec robo_imitate-container bash -c "source /opt/ros/humble/setup.bash &&
     ├── 2026-09-04_00-17-21_42/checkpoint/last.pt  ← pre-train anterior (sesión 3 Sep)
     └── 2026-09-04_18-35-37_42/checkpoint/last.pt  ← pre-train nuevo (25 épocas, 4 Sep)
 ```
+
+---
+
+## Progreso de Fine-Tuning y Nuevos Bugs Resueltos (Sesión 4-5 Sep 2026)
+
+Durante el inicio y depuración del Fine-Tuning con PPO, se resolvieron problemas críticos de comportamiento físico y aprendizaje:
+
+1. **Bug: Robot no volvía al home físico antes de cada iteración**
+   - **Causa:** `xarm_isaac_env.py` enviaba comandos de reset mediante coordenadas cartesianas (`/target_frame_raw`), las cuales eran ignoradas por variaciones extremas. 
+   - **Solución:** Se replicó exactamente el mecanismo del script experto original (`robo_imitate`). El entorno `reset()` ahora apaga el `cartesian_motion_controller`, enciende el `joint_trajectory_controller`, publica los ángulos fijos articulares (`[0.00148, 0.06095, 1.164, -0.00033, 1.122, -0.00093]`), espera 3.5s, y vuelve a encender el controlador cartesiano. (✅ Resuelto).
+
+2. **Bug: Ctrl+C en script `.sh` no apagaba el PPO en Docker**
+   - **Causa:** Enviar SIGINT desde el host al proceso de `docker exec` no mataba el subproceso de `python script/run.py` dentro del contenedor.
+   - **Solución:** Se incluyó un bloque de captura (trap) en `finetune_isaac.sh`: `trap "docker exec robo_imitate-container pkill -f script/run.py; exit 0" SIGINT SIGTERM`. Ahora finaliza el script remotamente sin dejar procesos zombie. (✅ Resuelto).
+
+3. **Bug Crítico de RL: PPO explotaba en `NaN` o la política se congelaba ("se queda quieto")**
+   - **Causa 1 (PPO Congelado):** Sin multiplicador de velocidad, el modelo pre-entrenado daba pasos físicos de *1.5 milímetros*. El sistema RL original usaba recompensa densa exponencial que caía a `0.0` a distancias largas. Como el robot avanzaba lentísimo y no ganaba recompensa, PPO aprendía rápidamente a no moverse para minimizar el `r_penalty` de acción.
+   - **Causa 2 (Explosión NaN):** Al agregar de vuelta el factor empírico de `speed_multiplier = 40.0` (usado originalmente para inferencia visual), la exploración aleatoria natural de RL (`std=0.1`) provocó que se predijeran acciones máximas (`0.264 m`), que al multiplicarse por 40 resultaban en comandos de **10 metros por paso**, rompiendo el motor de física de Isaac Sim y resultando en poses `NaN` para el Actor/Crítico de PyTorch.
+   - **Solución Híbrida Aplicada:** 
+     1. Se **eliminó permanentemente** el `speed_multiplier=40.0` de `xarm_isaac_env.py`.
+     2. Se ajustó `r_reach` en la función de recompensa hacia un modelo denso completamente lineal (`r_reach = -dist_xy * 5.0`). Esto otorga un gradiente fuerte en cada paso (mientras más cerca, menos penalización), incitando a PPO a **aprender por su propia cuenta** a aumentar la velocidad (tamaño de acción) de manera segura y controlada sin necesidad de un parche multiplicador. (✅ Resuelto, iteraciones iterativas estables validadas en log sin bloqueos).
+
+| Aspecto | Esperado/Observado Actualizado (5 Sep) |
+|---------|--------------------------------|
+| Movimiento EEF | El robot realiza reset físico articular exitosamente en iteración 0 y navega el espacio hacia el objetivo. |
+| Valores `/target_frame_raw` | Coordenadas absolutas enviadas correctamente y respetando el rango físico. |
+| Episode Reward | Comenzó en `0.00` en iteración 0 y 1 (hasta llenarse el max_episode_steps de 400). Valores Q captaron señal positiva de recompensa densa. |
+
