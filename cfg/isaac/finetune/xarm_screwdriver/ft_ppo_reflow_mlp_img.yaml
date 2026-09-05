@@ -41,7 +41,8 @@ env:
   name: ${env_name}
   env_type: isaac
   best_reward_threshold_for_success: 1
-  max_episode_steps: 400
+  max_episode_steps: 1000
+  reset_at_iteration: false
   save_video: false
   use_image_obs: true
   wrappers:
@@ -72,7 +73,7 @@ wandb:
 train:
   n_train_itr: 301
   n_critic_warmup_itr: 2
-  n_steps: 200
+  n_steps: 1000
   gamma: 0.999
   augment: true
   grad_accumulate: 2

@@ -377,6 +377,11 @@ class XArmPickScrewdriverEnv(gym.Env):
         # 2. relative action matrix (gripper_link_base)
         act_x, act_y, act_z, act_rx, act_ry, act_rz = action
         
+        # El salto es tan grande (-13cm) que al ponerle el menos (-act_z = +13cm)
+        # el robot se estrella a toda velocidad contra la mesa, causando que el
+        # motor de físicas colapse (NaN) y arroje el error de 'Eigenvalues'.
+        act_z = np.clip(act_z, -0.005, 0.005)
+
         act_rot = t3d.euler.euler2mat(act_rx, act_ry, act_rz)
         act_mat = np.eye(4)
         act_mat[:3, :3] = act_rot
