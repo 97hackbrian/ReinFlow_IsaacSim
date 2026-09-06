@@ -310,3 +310,20 @@ Durante el inicio y depuración del Fine-Tuning con PPO, se resolvieron problema
 
 ### 8. Próximos Pasos
 - El usuario ha solicitado pausar y revisar a profundidad el proceso de Flow Matching antes de continuar, a la espera de nuevas instrucciones.
+
+### 9. Depuración de Evaluación de Flow Matching (5 Sep 2026 - Noche)
+Tras resolver el eje Z, el usuario reportó que el script de evaluación (`eval_isaac.sh`) interrumpía el robot a medio camino y lo regresaba a su posición inicial, fallando la tarea. Se identificaron y solucionaron múltiples bugs que causaban este "reseteo fantasma":
+
+1. **Bug de Tiempo Físico vs. Tiempo de Inferencia:** 
+   - **Causa:** El archivo YAML especificaba `max_episode_steps: 1000` (pensando en 1000 pasos de red neuronal). Sin embargo, el wrapper intermedio (`multi_step.py`) lo interpretaba como pasos físicos del simulador. Como cada predicción equivale a 4 pasos físicos, el wrapper cortaba la simulación al llegar al paso de red neuronal 250 (250 * 4 = 1000), abortando prematuramente el episodio.
+   - **Solución:** Se editó `multi_step.py` para multiplicar automáticamente `max_episode_steps * n_action_steps`, permitiendo a la simulación vivir los 4000 pasos físicos correspondientes a los 1000 pasos de inferencia.
+
+2. **Bug de Bloqueo de la Animación de Agarre (Timeout):**
+   - **Causa:** Al detectar el objetivo (Z < 0.18m), el código de Python enviaba la orden de bajar y se "dormía" por 3 segundos (`time.sleep(3.0)`). Pero el nodo de control de ROS (`sixd_speed_limiter`) exige recibir mensajes constantemente; al pasar 0.5 segundos de silencio, congelaba el brazo por seguridad.
+   - **Solución:** Se reemplazó el `time.sleep` estático por un bucle `while` que envía continuamente la posición deseada a ROS en iteraciones de 0.1s.
+
+3. **Bug del Límite de Velocidad (Falta de recorrido en Z):**
+   - **Causa:** El usuario notó que al brazo "le faltaban 10 cm para llegar abajo" durante el agarre. Se descubrió que `sixd_speed_limiter` restringe la velocidad máxima a 2 centímetros por segundo (0.02 m/s). Para bajar 16 cm (de 0.22 a 0.06), el robot requería 8 segundos físicos, pero el código anterior solo le daba 3 segundos (logrando recorrer solo 6 cm).
+   - **Solución:** Se eliminó el tiempo fijo y se implementó un sistema de espera dinámica. Ahora el programa escanea la coordenada Z actual del efector final (`self.current_ee_pose[2]`) y espera inteligentemente el tiempo que sea necesario (hasta un límite de 15s) hasta que el brazo alcance físicamente la cota de agarre (`0.06m`).
+
+Además, se corrigió un `AttributeError: save_video` inicializando correctamente la variable desde el yaml en `eval_agent_base.py`, y se configuró este último para abortar limpiamente el bucle y cerrar el programa en cuanto la secuencia de agarre declara el `terminated=True`.
