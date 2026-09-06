@@ -50,7 +50,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         img_size=(96, 96),
         max_episode_steps=400,
         trigger_z=0.22,
-        final_grasp_z=0.06,
+        final_grasp_z=0.088,
         speed_multiplier=40.0,
         control_dt=0.05,
         sparse_reward=False,
