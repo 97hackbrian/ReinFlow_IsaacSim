@@ -70,6 +70,8 @@ class EvalAgent:
         #     raise ValueError(f"plot scale must be one of {self.plot_scale_options}, but received {self.plot_scale}!")
         ############################################
         
+        self.save_video = cfg.env.get("save_video", False)
+        
         # Make vectorized env
         self.env_name: str = cfg.env.name
         env_type = cfg.env.get("env_type", None)
@@ -386,6 +388,11 @@ class EvalAgent:
             reward_trajs[step] = reward_venv
             firsts_trajs[step + 1] = terminated_venv | truncated_venv
             prev_obs_venv = obs_venv
+            
+            if np.any(terminated_venv):
+                import sys; sys.stdout.flush()
+                print("\n[EVAL] Grasp sequence completed! Terminating inference loop early.", flush=True)
+                break
         
         if self.video_writer is not None:
             self.video_writer.release()

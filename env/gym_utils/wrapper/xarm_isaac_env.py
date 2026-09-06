@@ -49,8 +49,8 @@ class XArmPickScrewdriverEnv(gym.Env):
         usd_path=None,
         img_size=(96, 96),
         max_episode_steps=400,
-        trigger_z=0.11,
-        final_grasp_z=0.088,
+        trigger_z=0.22,
+        final_grasp_z=0.06,
         speed_multiplier=40.0,
         control_dt=0.05,
         sparse_reward=False,
@@ -286,6 +286,10 @@ class XArmPickScrewdriverEnv(gym.Env):
         # Check termination & truncation using raw coordinates
         dist_xy = math.sqrt((raw_ee_pos[0] - self.target_spawn_x) ** 2 + (raw_ee_pos[1] - self.target_spawn_y) ** 2)
         
+        # Log distance occasionally or when close, to help debug grasp sequence
+        if self.step_count % 20 == 0 or (dist_xy < 0.05 and raw_ee_pos[2] < 0.25):
+            self.node.get_logger().info(f"[GRASP CHECK] step: {self.step_count}, dist_xy: {dist_xy:.4f} (needs < 0.02) | Z: {raw_ee_pos[2]:.4f} (needs <= {self.trigger_z:.4f})")
+
         success = (dist_xy < 0.02) and (raw_ee_pos[2] <= self.trigger_z)
 
         if success and self.mode == "ros2_sync":
@@ -293,6 +297,9 @@ class XArmPickScrewdriverEnv(gym.Env):
             from std_msgs.msg import Float64MultiArray
             import time
             import transforms3d as t3d
+            
+            self.node.get_logger().info("#################### [GRASP SEQUENCE] GRASP ACTIVATED! ####################")
+            self.node.get_logger().info(f"[GRASP SEQUENCE] Moving to final grasp Z: {self.final_grasp_z}")
             
             # Stop moving XY, drop to FINAL_GRASP_Z
             msg = PoseStamped()
@@ -310,12 +317,6 @@ class XArmPickScrewdriverEnv(gym.Env):
             msg.pose.orientation.y = float(quat[2])
             msg.pose.orientation.z = float(quat[3])
             
-            # Create absolute publisher if it doesn't exist (target_raw_pub is for relativ in gripper_link_base!)
-            # Wait, no, target_frame_raw can take link_base if we change frame_id!
-            # BUT cartesian_motion_controller might expect relative. Wait, speed limiter expects link_base!
-            # Let's see _send_ros2_action. It uses "gripper_link_base".
-            # We can just send a relative Z drop.
-            # But the easiest is to publish to /target_frame_raw with link_base
             abs_pub = self.node.create_publisher(PoseStamped, '/target_frame_raw', 1)
             t0 = time.time()
             while time.time() - t0 < 3.0:
@@ -323,12 +324,14 @@ class XArmPickScrewdriverEnv(gym.Env):
                 abs_pub.publish(msg)
                 time.sleep(0.1)
             
+            self.node.get_logger().info("#################### [GRASP SEQUENCE] Closing gripper! ####################")
             # Close gripper
             g_msg = Float64MultiArray()
             g_msg.data = [-0.01]
             self.isaac_gripper_pub.publish(g_msg)
             time.sleep(1.0)
             
+            self.node.get_logger().info("#################### [GRASP SEQUENCE] Lifting up! ####################")
             # Lift up
             msg.pose.position.z = 0.29
             t0 = time.time()
@@ -337,7 +340,7 @@ class XArmPickScrewdriverEnv(gym.Env):
                 abs_pub.publish(msg)
                 time.sleep(0.1)
             
-            # We don't reset the gripper here, it will be reset by the simulation when respawn happens.
+            self.node.get_logger().info("#################### [GRASP SEQUENCE] Sequence FINISHED! ####################")
 
 
         terminated = bool(success)
