@@ -122,7 +122,7 @@ class MultiStep(gym.Wrapper):
         self._single_action_space = env.action_space
         self._action_space = repeated_space(env.action_space, n_action_steps)
         self._observation_space = repeated_space(env.observation_space, n_obs_steps)
-        self.max_episode_steps = max_episode_steps
+        self.max_episode_steps = max_episode_steps * n_action_steps if max_episode_steps is not None else None
         self.n_obs_steps = n_obs_steps
         self.n_action_steps = n_action_steps
         self.reward_agg_method = reward_agg_method

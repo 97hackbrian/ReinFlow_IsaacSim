@@ -289,3 +289,24 @@ Durante el inicio y depuración del Fine-Tuning con PPO, se resolvieron problema
 | Valores `/target_frame_raw` | Coordenadas absolutas enviadas correctamente y respetando el rango físico. |
 | Episode Reward | Comenzó en `0.00` en iteración 0 y 1 (hasta llenarse el max_episode_steps de 400). Valores Q captaron señal positiva de recompensa densa. |
 
+
+### 5. Finalización del Pre-entrenamiento (5 Sep 2026)
+- Se ejecutó el pre-entrenamiento completo (200 épocas) exitosamente (`task-2433`).
+- El loss convergió de manera óptima a `0.0096`, superando con creces la meta de `0.02`. 
+
+### 6. Bug de Normalización de Datos y Vuelo del Robot
+- **Síntoma:** Tras el pre-entrenamiento, durante la evaluación el robot logró acercarse al destornillador en X e Y, pero en lugar de bajar a agarrarlo, salió volando hacia arriba (eje Z positivo).
+- **Análisis de Causa Raíz:** Se revisó el pipeline de `robo_imitate_to_reinflow.py` y se descubrió que el dataset teleoperado contiene un outlier o "salto" masivo de **-26.4 centímetros** (`-0.264m`) en el primer paso de todos los episodios (probablemente el "snap" de inicio del SpaceMouse).
+- **Efecto de Normalización:** Como los datos se aplastan al rango `[-1, 1]`, este outlier comprimió los movimientos sutiles y útiles del agarre (que rondan los `2 milímetros`) hacia el extremo `0.99` de la red. En consecuencia, si la red neuronal predice `0.0` (duda o inmovilidad), al des-normalizarse se convierte en un violento salto de **-13 centímetros**.
+- **Soluciones Intentadas y Crasheo (Eigenvalues did not converge):**
+  - El usuario invirtió la polaridad manualmente haciendo `act_mat[2, 3] = -act_z`. Esto corrigió la dirección (el robot empezó a ir hacia abajo).
+  - Sin embargo, como el salto seguía siendo de 13 centímetros, el robot se estrelló contra la mesa a velocidad terminal. 
+  - El choque provocó que el motor de físicas de Isaac Sim colapsara y entregara coordenadas inválidas (`NaN`), lo que desencadenó en el error matemático `numpy.linalg.LinAlgError: Eigenvalues did not converge` dentro de la librería `transforms3d` al intentar calcular los cuaterniones.
+  
+### 7. Ajustes en Reinforcement Learning (PPO)
+- Se corrigió el archivo `ft_ppo_reflow_mlp_img.yaml`:
+  - Se aumentó `n_steps: 1000` y `max_episode_steps: 1000` para que cada iteración de PPO abarque una trayectoria completa.
+  - Se añadió `reset_at_iteration: false` para evitar que el entorno aborte y reinicie las trayectorias prematuramente a la mitad de una aproximación.
+
+### 8. Próximos Pasos
+- El usuario ha solicitado pausar y revisar a profundidad el proceso de Flow Matching antes de continuar, a la espera de nuevas instrucciones.

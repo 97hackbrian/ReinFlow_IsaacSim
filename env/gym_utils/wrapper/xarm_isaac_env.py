@@ -49,7 +49,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         usd_path=None,
         img_size=(96, 96),
         max_episode_steps=400,
-        trigger_z=0.18,
+        trigger_z=0.11,
         final_grasp_z=0.088,
         speed_multiplier=40.0,
         control_dt=0.05,
@@ -63,7 +63,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         self.mode = mode
         self.usd_path = usd_path
         self.img_size = img_size
-        self.max_episode_steps = 2000
+        self.max_episode_steps = 999999
         self.trigger_z = trigger_z
         self.final_grasp_z = final_grasp_z
         self.speed_multiplier = speed_multiplier
@@ -171,6 +171,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         pass
 
     def reset(self, **kwargs):
+        self.node.get_logger().info("#################### GYM ENV RESET CALLED ####################")
         self.step_count = 0
         self.prev_action = np.zeros(6, dtype=np.float32)
         self.settled_steps = 0
@@ -316,8 +317,11 @@ class XArmPickScrewdriverEnv(gym.Env):
             # We can just send a relative Z drop.
             # But the easiest is to publish to /target_frame_raw with link_base
             abs_pub = self.node.create_publisher(PoseStamped, '/target_frame_raw', 1)
-            abs_pub.publish(msg)
-            time.sleep(3.0) # wait to descend
+            t0 = time.time()
+            while time.time() - t0 < 3.0:
+                msg.header.stamp = self.node.get_clock().now().to_msg()
+                abs_pub.publish(msg)
+                time.sleep(0.1)
             
             # Close gripper
             g_msg = Float64MultiArray()
@@ -327,8 +331,11 @@ class XArmPickScrewdriverEnv(gym.Env):
             
             # Lift up
             msg.pose.position.z = 0.29
-            abs_pub.publish(msg)
-            time.sleep(1.5)
+            t0 = time.time()
+            while time.time() - t0 < 1.5:
+                msg.header.stamp = self.node.get_clock().now().to_msg()
+                abs_pub.publish(msg)
+                time.sleep(0.1)
             
             # We don't reset the gripper here, it will be reset by the simulation when respawn happens.
 
@@ -336,6 +343,9 @@ class XArmPickScrewdriverEnv(gym.Env):
         terminated = bool(success)
         truncated = bool(self.step_count >= self.max_episode_steps)
         done = terminated or truncated
+
+        if done:
+            self.node.get_logger().info(f"#################### STEP DONE: success={success}, dist_xy={dist_xy:.4f}, z={raw_ee_pos[2]:.4f}, step={self.step_count} ####################")
 
         info = {
             "success": float(success),
