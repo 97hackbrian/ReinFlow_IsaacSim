@@ -319,7 +319,8 @@ class XArmPickScrewdriverEnv(gym.Env):
             
             abs_pub = self.node.create_publisher(PoseStamped, '/target_frame_raw', 1)
             t0 = time.time()
-            while time.time() - t0 < 3.0:
+            # Wait dynamically until Z reaches target (or timeout at 15s)
+            while self.current_ee_pose[2] > self.final_grasp_z + 0.005 and time.time() - t0 < 15.0:
                 msg.header.stamp = self.node.get_clock().now().to_msg()
                 abs_pub.publish(msg)
                 time.sleep(0.1)
@@ -335,7 +336,8 @@ class XArmPickScrewdriverEnv(gym.Env):
             # Lift up
             msg.pose.position.z = 0.29
             t0 = time.time()
-            while time.time() - t0 < 1.5:
+            # Wait dynamically until Z reaches 0.29 (or timeout at 15s)
+            while self.current_ee_pose[2] < 0.29 - 0.005 and time.time() - t0 < 15.0:
                 msg.header.stamp = self.node.get_clock().now().to_msg()
                 abs_pub.publish(msg)
                 time.sleep(0.1)
