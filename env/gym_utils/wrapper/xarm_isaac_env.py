@@ -49,8 +49,9 @@ class XArmPickScrewdriverEnv(gym.Env):
         usd_path=None,
         img_size=(96, 96),
         max_episode_steps=400,
-        trigger_z=0.22,
-        final_grasp_z=0.088,
+        trigger_z=0.24,
+        tolerance_xy=0.02,
+        final_grasp_z=0.098,
         speed_multiplier=40.0,
         control_dt=0.05,
         sparse_reward=False,
@@ -65,6 +66,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         self.img_size = img_size
         self.max_episode_steps = 999999
         self.trigger_z = trigger_z
+        self.tolerance_xy = tolerance_xy
         self.final_grasp_z = final_grasp_z
         self.speed_multiplier = speed_multiplier
         self.control_dt = control_dt
@@ -288,9 +290,9 @@ class XArmPickScrewdriverEnv(gym.Env):
         
         # Log distance occasionally or when close, to help debug grasp sequence
         if self.step_count % 20 == 0 or (dist_xy < 0.05 and raw_ee_pos[2] < 0.25):
-            self.node.get_logger().info(f"[GRASP CHECK] step: {self.step_count}, dist_xy: {dist_xy:.4f} (needs < 0.02) | Z: {raw_ee_pos[2]:.4f} (needs <= {self.trigger_z:.4f})")
+            self.node.get_logger().info(f"[GRASP CHECK] step: {self.step_count}, dist_xy: {dist_xy:.4f} (needs < {self.tolerance_xy:.4f}) | Z: {raw_ee_pos[2]:.4f} (needs <= {self.trigger_z:.4f})")
 
-        success = (dist_xy < 0.02) and (raw_ee_pos[2] <= self.trigger_z)
+        success = (dist_xy < self.tolerance_xy) and (raw_ee_pos[2] <= self.trigger_z)
 
         if success and self.mode == "ros2_sync":
             from geometry_msgs.msg import PoseStamped
@@ -440,7 +442,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         dist_xy = math.sqrt((raw_ee_pos[0] - self.target_spawn_x) ** 2 + (raw_ee_pos[1] - self.target_spawn_y) ** 2)
         
         if self.sparse_reward:
-            if dist_xy < 0.02 and raw_ee_pos[2] <= self.trigger_z:
+            if dist_xy < self.tolerance_xy and raw_ee_pos[2] <= self.trigger_z:
                 return 10.0
             return 0.0
 
