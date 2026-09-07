@@ -50,7 +50,8 @@ class XArmPickScrewdriverEnv(gym.Env):
         img_size=(96, 96),
         max_episode_steps=400,
         trigger_z=0.24,
-        tolerance_xy=0.02,
+        tolerance_x=0.0002,
+        tolerance_y=0.06,
         final_grasp_z=0.098,
         speed_multiplier=40.0,
         control_dt=0.05,
@@ -58,6 +59,7 @@ class XArmPickScrewdriverEnv(gym.Env):
         device="cuda:0",
         random_spawn=False,
         normalization_path=None,
+        tolerance_xy=None,
         **kwargs
     ):
         super().__init__()
@@ -66,7 +68,11 @@ class XArmPickScrewdriverEnv(gym.Env):
         self.img_size = img_size
         self.max_episode_steps = 999999
         self.trigger_z = trigger_z
-        self.tolerance_xy = tolerance_xy
+        if tolerance_xy is not None:
+            tolerance_x = tolerance_xy
+            tolerance_y = tolerance_xy
+        self.tolerance_x = tolerance_x
+        self.tolerance_y = tolerance_y
         self.final_grasp_z = final_grasp_z
         self.speed_multiplier = speed_multiplier
         self.control_dt = control_dt
@@ -286,13 +292,15 @@ class XArmPickScrewdriverEnv(gym.Env):
         reward = self._compute_reward(raw_ee_pos, action)
 
         # Check termination & truncation using raw coordinates
-        dist_xy = math.sqrt((raw_ee_pos[0] - self.target_spawn_x) ** 2 + (raw_ee_pos[1] - self.target_spawn_y) ** 2)
+        dist_x = abs(raw_ee_pos[0] - self.target_spawn_x)
+        dist_y = abs(raw_ee_pos[1] - self.target_spawn_y)
+        dist_xy = math.sqrt(dist_x ** 2 + dist_y ** 2)
         
         # Log distance occasionally or when close, to help debug grasp sequence
-        if self.step_count % 20 == 0 or (dist_xy < 0.05 and raw_ee_pos[2] < 0.25):
-            self.node.get_logger().info(f"[GRASP CHECK] step: {self.step_count}, dist_xy: {dist_xy:.4f} (needs < {self.tolerance_xy:.4f}) | Z: {raw_ee_pos[2]:.4f} (needs <= {self.trigger_z:.4f})")
+        if self.step_count % 20 == 0 or (dist_x < self.tolerance_x * 2.0 and dist_y < self.tolerance_y * 1.5 and raw_ee_pos[2] <= self.trigger_z + 0.02):
+            self.node.get_logger().info(f"[GRASP CHECK] step: {self.step_count}, dist_x: {dist_x:.4f} (needs < {self.tolerance_x:.4f}), dist_y: {dist_y:.4f} (needs < {self.tolerance_y:.4f}) | Z: {raw_ee_pos[2]:.4f} (needs <= {self.trigger_z:.4f})")
 
-        success = (dist_xy < self.tolerance_xy) and (raw_ee_pos[2] <= self.trigger_z)
+        success = (dist_x < self.tolerance_x) and (dist_y < self.tolerance_y) and (raw_ee_pos[2] <= self.trigger_z)
 
         if success and self.mode == "ros2_sync":
             from geometry_msgs.msg import PoseStamped
@@ -300,7 +308,7 @@ class XArmPickScrewdriverEnv(gym.Env):
             import time
             import transforms3d as t3d
             
-            self.node.get_logger().info("#################### [GRASP SEQUENCE] GRASP ACTIVATED! ####################")
+            self.node.get_logger().info(f"#################### [GRASP SEQUENCE] GRASP ACTIVATED! (dist_x={dist_x:.4f} < {self.tolerance_x:.4f}, dist_y={dist_y:.4f} < {self.tolerance_y:.4f}, Z={raw_ee_pos[2]:.4f} <= {self.trigger_z:.4f}) ####################")
             self.node.get_logger().info(f"[GRASP SEQUENCE] Moving to final grasp Z: {self.final_grasp_z}")
             
             # Stop moving XY, drop to FINAL_GRASP_Z
@@ -352,10 +360,12 @@ class XArmPickScrewdriverEnv(gym.Env):
         done = terminated or truncated
 
         if done:
-            self.node.get_logger().info(f"#################### STEP DONE: success={success}, dist_xy={dist_xy:.4f}, z={raw_ee_pos[2]:.4f}, step={self.step_count} ####################")
+            self.node.get_logger().info(f"#################### STEP DONE: success={success}, dist_x={dist_x:.4f}, dist_y={dist_y:.4f}, dist_xy={dist_xy:.4f}, z={raw_ee_pos[2]:.4f}, step={self.step_count} ####################")
 
         info = {
             "success": float(success),
+            "distance_x": dist_x,
+            "distance_y": dist_y,
             "distance_xy": dist_xy,
             "ee_z": raw_ee_pos[2],
             "target_spawn": [self.target_spawn_x, self.target_spawn_y]
@@ -439,10 +449,12 @@ class XArmPickScrewdriverEnv(gym.Env):
         return None
     def _compute_reward(self, raw_ee_pos, action):
         """Compute reward using raw (unnormalized) end-effector position in meters."""
-        dist_xy = math.sqrt((raw_ee_pos[0] - self.target_spawn_x) ** 2 + (raw_ee_pos[1] - self.target_spawn_y) ** 2)
+        dist_x = abs(raw_ee_pos[0] - self.target_spawn_x)
+        dist_y = abs(raw_ee_pos[1] - self.target_spawn_y)
+        dist_xy = math.sqrt(dist_x ** 2 + dist_y ** 2)
         
         if self.sparse_reward:
-            if dist_xy < self.tolerance_xy and raw_ee_pos[2] <= self.trigger_z:
+            if dist_x < self.tolerance_x and dist_y < self.tolerance_y and raw_ee_pos[2] <= self.trigger_z:
                 return 10.0
             return 0.0
 
@@ -455,13 +467,13 @@ class XArmPickScrewdriverEnv(gym.Env):
         # 2. Descent reward
         # Encourage descending as it gets closer
         r_descend = 0.0
-        if dist_xy < 0.08:
+        if dist_x < self.tolerance_x * 3.0 and dist_y < self.tolerance_y * 2.0:
             z_initial = 0.30
             r_descend = max(0.0, (z_initial - raw_ee_pos[2]) * 10.0)
 
         # 3. Trigger condition
         r_trigger = 0.0
-        if dist_xy < 0.03 and raw_ee_pos[2] <= self.trigger_z:
+        if dist_x < self.tolerance_x and dist_y < self.tolerance_y and raw_ee_pos[2] <= self.trigger_z:
             r_trigger = 20.0
 
         # 4. Action smoothness penalties (reduced to prevent collapsing to 0)
